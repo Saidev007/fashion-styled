@@ -1,4 +1,8 @@
-# Forme — Fashion Style Board AI
+# fashion-styled
+
+Style your fashion using AI.
+
+## Forme — Fashion Style Board AI
 
 A responsive fashion styling frontend built with React, TypeScript, and Vite. It includes a landing page, style journal, deterministic sample outfit generator, saved style board, and a locally stored digital wardrobe.
 
@@ -26,17 +30,6 @@ The outfit generator uses deterministic demo recommendations and editorial image
 
 Images are loaded from Unsplash and require an internet connection. The generator labels its suggestions as demo styling ideas and does not claim that imagery depicts exact garments.
 
-## Publish to GitHub
+## GitHub repository
 
-Create an empty repository on GitHub, then from this project folder run:
-
-```sh
-git init
-git add .
-git commit -m "Build Forme fashion styling app"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPOSITORY.git
-git push -u origin main
-```
-
-Replace the remote URL with your repository URL. Never commit `.env` files, API keys, or other credentials.
+https://github.com/Saidev007/fashion-styled
