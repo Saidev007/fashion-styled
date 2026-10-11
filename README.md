@@ -33,3 +33,7 @@ Images are loaded from Unsplash and require an internet connection. The generato
 ## GitHub repository
 
 https://github.com/Saidev007/fashion-styled
+
+## Deploy to Vercel
+
+Import this GitHub repository in Vercel. Vercel detects Vite automatically; use `npm run build` as the build command and `dist` as the output directory if prompted. The included rewrite keeps client-side routes working when opened directly.
