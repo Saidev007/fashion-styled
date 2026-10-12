@@ -4,5 +4,11 @@
       "source": "/(.*)",
       "destination": "/"
     }
-  ]
+  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/[...path].ts": {
+      "maxDuration": 180
+    }
+  }
 }
