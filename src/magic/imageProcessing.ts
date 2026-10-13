@@ -44,7 +44,7 @@ export async function renderPhoto(source: Blob, filter: FilterName, adjustments:
   const contrast = Math.max(0, adjustments.contrast)
   const saturation = Math.max(0, adjustments.saturation)
   const css = filterFor(filter)
-  ctx.filter = `${css} brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) ${warmth >= 0 ? `sepia(${warmth / 250})` : `hue-rotate(${Math.abs(warmth) / 2}deg)`}`
+  ctx.filter = `${css === 'none' ? '' : `${css} `}brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) ${warmth >= 0 ? `sepia(${warmth / 250})` : `hue-rotate(${Math.abs(warmth) / 2}deg)`}`
   const drawW = width; const drawH = height
   ctx.drawImage(image, -drawW / 2, -drawH / 2, drawW, drawH); ctx.restore(); ctx.filter = 'none'
   if (overlay === 'Futuristic blue') { ctx.strokeStyle = '#56d8ff'; ctx.lineWidth = Math.max(8, outputWidth * .012); ctx.strokeRect(ctx.lineWidth, ctx.lineWidth, outputWidth - ctx.lineWidth * 2, outputHeight - ctx.lineWidth * 2) }
@@ -56,7 +56,6 @@ export async function renderPhoto(source: Blob, filter: FilterName, adjustments:
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('The edited image could not be exported.')), mime, .93))
 }
 export function resetAdjustments(): Adjustments { return { ...defaultAdjustments } }
-
 
 
 

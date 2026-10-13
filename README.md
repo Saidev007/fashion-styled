@@ -26,7 +26,7 @@ npm run preview
 
 ## Current scope
 
-The outfit generator uses deterministic demo recommendations and editorial imagery. The app does not yet connect to an AI provider, database, authentication service, image upload provider, or weather service. Browser storage is for the local demo only; it is not suitable for private accounts or shared production data. Login and registration, backend authorization, persistent MongoDB storage, provider integrations, and deployment configuration remain to be implemented before production use.
+The outfit generator uses deterministic demo recommendations and editorial imagery. The interface stores the user's current style board and closet locally in the browser; the API also includes MongoDB-backed authentication and wardrobe routes. The Magic Camera's photo gallery is stored separately in IndexedDB on the current device.
 
 Images are loaded from Unsplash and require an internet connection. The generator labels its suggestions as demo styling ideas and does not claim that imagery depicts exact garments.
 
@@ -51,6 +51,6 @@ npm run dev
 
 To enable AI image edits, set `AI_PROVIDER=openai`, `AI_MODEL=gpt-image-2`, and `AI_API_KEY` in the server environment. Keep the key server-side; never use a `VITE_` prefix. With the default `AI_PROVIDER=demo`, the UI remains available and the API returns a configuration message. The provider call uses OpenAI's Images edits endpoint and has not been live-tested without credentials. The endpoint has a best-effort per-instance request cap; configure edge-level rate limiting before exposing a paid provider key publicly.
 
-Vercel serves the frontend build and routes API requests through `api/[...path].ts`. Configure `AI_PROVIDER`, `AI_MODEL`, and `AI_API_KEY` in the Vercel project environment. Camera hardware and the configured AI provider need browser/device access and credentials and cannot be verified by the local build alone.
+Vercel serves the frontend build and routes API requests through `api/[...path].ts`. Configure `MONGODB_URI`, `SESSION_SECRET`, and `JWT_SECRET` for the backend; production session and JWT secrets must each be at least 32 characters. Set `APP_URL` to the deployed site origin. To enable AI edits, also configure `AI_PROVIDER=openai`, `AI_MODEL`, and the server-only `AI_API_KEY`. Camera hardware and the configured AI provider need browser/device access and credentials and cannot be verified by the local build alone.
 
 Backend tests after compilation: `npm run server:build` followed by `node --test dist-server/server/tests/auth.test.js`.

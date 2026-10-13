@@ -20,6 +20,7 @@ export function useCamera() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const startingRef = useRef(false)
+  const attemptRef = useRef(0)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceIndex, setDeviceIndex] = useState(0)
@@ -29,30 +30,73 @@ export function useCamera() {
   const [flashVisible, setFlashVisible] = useState(false)
 
   const stop = useCallback(() => {
-    if (streamRef.current) streamRef.current.getTracks().forEach(track => { track.onended = null; track.stop() })
-    streamRef.current = null; setStream(null)
+    attemptRef.current += 1
+    startingRef.current = false
+    setStarting(false)
+    const current = streamRef.current
+    if (current) current.getTracks().forEach(track => { track.onended = null; track.stop() })
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+    setStream(null)
   }, [])
-  useEffect(() => () => { streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null }, [])
+  useEffect(() => () => {
+    attemptRef.current += 1
+    streamRef.current?.getTracks().forEach(track => { track.onended = null; track.stop() })
+    streamRef.current = null
+  }, [])
   useEffect(() => {
     if (!stream || !navigator.mediaDevices?.addEventListener) return
-    const refresh = () => { void navigator.mediaDevices.enumerateDevices().then(inputs => setDevices(inputs.filter(device => device.kind === 'videoinput'))) }
+    const refresh = () => {
+      void navigator.mediaDevices.enumerateDevices()
+        .then(inputs => setDevices(inputs.filter(device => device.kind === 'videoinput')))
+        .catch(() => setError('The available cameras could not be refreshed.'))
+    }
     navigator.mediaDevices.addEventListener('devicechange', refresh)
     return () => navigator.mediaDevices.removeEventListener('devicechange', refresh)
-  }, [stream])
+  }, [stream, setError])
 
   const start = useCallback(async (deviceId?: string): Promise<boolean> => {
     if (startingRef.current) return false
-    startingRef.current = true; setStarting(true); setError(''); stop()
-    if (!navigator.mediaDevices?.getUserMedia) { setError(cameraMessage(null)); startingRef.current = false; setStarting(false); return false }
+    stop()
+    const attempt = ++attemptRef.current
+    startingRef.current = true
+    setStarting(true)
+    setError('')
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(cameraMessage(null))
+      startingRef.current = false
+      setStarting(false)
+      return false
+    }
     try {
       const media = await requestCamera({ audio: false, video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1440 } } })
-      streamRef.current = media; setStream(media)
+      if (attempt !== attemptRef.current) {
+        media.getTracks().forEach(track => track.stop())
+        return false
+      }
+      streamRef.current = media
+      setStream(media)
       media.getVideoTracks().forEach(track => { track.onended = () => { if (streamRef.current === media) { stop(); setError('The camera disconnected. Reconnect it and start the camera again.') } } })
-      const inputs = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput')
+      let inputs: MediaDeviceInfo[] = []
+      try {
+        inputs = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput')
+      } catch {
+        setError('The camera started, but available devices could not be listed.')
+      }
+      if (attempt !== attemptRef.current) return false
       setDevices(inputs); if (deviceId) setDeviceIndex(Math.max(0, inputs.findIndex(device => device.deviceId === deviceId)))
       return true
-    } catch (cause) { stop(); setError(cameraMessage(cause)); return false }
-    finally { startingRef.current = false; setStarting(false) }
+    } catch (cause) {
+      if (attempt !== attemptRef.current) return false
+      stop()
+      setError(cameraMessage(cause))
+      return false
+    } finally {
+      if (attempt === attemptRef.current) {
+        startingRef.current = false
+        setStarting(false)
+      }
+    }
   }, [stop])
   const switchCamera = useCallback(async () => {
     if (devices.length < 2 || startingRef.current) return
@@ -73,4 +117,3 @@ export function useCamera() {
   }, [flashEffect])
   return { videoRef, stream, devices, deviceIndex, error, starting, flashEffect, flashVisible, setFlashEffect, setError, start, stop, switchCamera, capture }
 }
-

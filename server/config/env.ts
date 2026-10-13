@@ -10,7 +10,7 @@ const schema = z.object({
   MONGODB_URI: z.string().default(''),
   SESSION_SECRET: z.string().default('development-session-secret'),
   JWT_SECRET: z.string().default('development-jwt-secret'),
-  AI_PROVIDER: z.string().default('demo'), AI_API_KEY: z.string().default(''), AI_MODEL: z.string().default('gpt-image-2'),
+  AI_PROVIDER: z.enum(['demo', 'openai']).default('demo'), AI_API_KEY: z.string().trim().default(''), AI_MODEL: z.string().trim().min(1).max(100).default('gpt-image-2'),
   CLOUDINARY_CLOUD_NAME: z.string().default(''), CLOUDINARY_API_KEY: z.string().default(''), CLOUDINARY_API_SECRET: z.string().default(''), WEATHER_API_KEY: z.string().default(''),
 });
 const parsed = schema.safeParse(process.env);
@@ -21,5 +21,4 @@ if (env.NODE_ENV === 'production') {
   if (missing.length) throw new Error(`Missing required environment variables for production: ${missing.join(', ')}`);
   if (env.SESSION_SECRET.length < 32 || env.JWT_SECRET.length < 32) throw new Error('Production session and JWT secrets must be at least 32 characters.');
 }
-
 
