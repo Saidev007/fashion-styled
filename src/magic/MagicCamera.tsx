@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Aperture, ArrowLeft, ChevronLeft, ChevronRight, Download, FlipHorizontal, Images, LoaderCircle, RotateCcw, Save, Sparkles, SwitchCamera, Trash2, X } from 'lucide-react'
 import { clearPhotos, deletePhoto, listPhotos, savePhoto } from './gallery'
 import { loadImage, renderPhoto } from './imageProcessing'
@@ -7,6 +7,19 @@ import { defaultAdjustments, filters, overlays, type Adjustments, type FilterNam
 
 type Screen = 'permission' | 'camera' | 'print' | 'editor' | 'ai' | 'gallery'
 function blobUrl(blob: Blob) { return URL.createObjectURL(blob) }
+function useObjectUrl(blob: Blob | null) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (!blob) {
+      setUrl('')
+      return
+    }
+    const objectUrl = blobUrl(blob)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [blob])
+  return url
+}
 async function prepareAIImage(blob: Blob): Promise<Blob> {
   const image = await loadImage(blob)
   const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight))
@@ -50,17 +63,20 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
   const fileRef = useRef<HTMLInputElement>(null)
   const notifyRef = useRef(notify)
   useEffect(() => { notifyRef.current = notify }, [notify])
-  const originalUrl = useMemo(() => originalPhoto ? blobUrl(originalPhoto) : '', [originalPhoto])
-  const sourceUrl = useMemo(() => source ? blobUrl(source) : '', [source])
+  const originalUrl = useObjectUrl(originalPhoto)
+  const sourceUrl = useObjectUrl(source)
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({})
-  useEffect(() => () => { if (originalUrl) URL.revokeObjectURL(originalUrl) }, [originalUrl])
-  useEffect(() => () => { if (sourceUrl) URL.revokeObjectURL(sourceUrl) }, [sourceUrl])
+  useEffect(() => {
+    const urls = gallery.map(photo => [photo.id, blobUrl(photo.final)] as const)
+    setThumbUrls(Object.fromEntries(urls))
+    return () => urls.forEach(([, url]) => URL.revokeObjectURL(url))
+  }, [gallery])
   useEffect(() => { if (!camera.stream || !camera.videoRef.current) return; camera.videoRef.current.srcObject = camera.stream; void camera.videoRef.current.play().catch(() => camera.setError('The live preview could not play. Try another camera.')) }, [camera.stream, screen, camera.setError])
   useEffect(() => {
     let active = true
     if (screen !== 'gallery') return
-    listPhotos().then((photos) => { if (active) { setGallery(photos); const urls: Record<string, string> = {}; photos.forEach(photo => { urls[photo.id] = URL.createObjectURL(photo.final) }); setThumbUrls(urls) } }).catch(error => notifyRef.current(error instanceof Error ? error.message : 'Gallery could not be loaded.'))
-    return () => { active = false; setThumbUrls(current => { Object.values(current).forEach(URL.revokeObjectURL); return {} }) }
+    listPhotos().then(photos => { if (active) setGallery(photos) }).catch(error => notifyRef.current(error instanceof Error ? error.message : 'Gallery could not be loaded.'))
+    return () => { active = false }
   }, [screen])
   useEffect(() => {
     if (!open) return
@@ -81,10 +97,6 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
   const refreshGallery = async () => {
     const photos = await listPhotos()
     setGallery(photos)
-    setThumbUrls(current => {
-      Object.values(current).forEach(URL.revokeObjectURL)
-      return Object.fromEntries(photos.map(photo => [photo.id, URL.createObjectURL(photo.final)]))
-    })
   }
   const saveToGallery = async () => {
     if (!source) return
@@ -96,10 +108,10 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
     finally { setBusy(false) }
   }
   const retake = () => { setOriginalPhoto(null); setSource(null); setSourceLabel(''); setSelectedId(''); setCaption(''); setAiBlob(null); setScreen('permission') }
-  const openSaved = async (photo: GalleryPhoto) => { setSelectedId(photo.id); setOriginalPhoto(photo.original); setSource(photo.final); setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setCaption(photo.caption); setAiBlob(photo.aiImage ?? null); setSourceLabel(photo.caption || 'Saved photo'); setScreen('print') }
+  const openSaved = async (photo: GalleryPhoto) => { setSelectedId(photo.id); setOriginalPhoto(photo.original); setSource(photo.aiImage ?? photo.original); setFilter(photo.filter); setOverlay(photo.overlay); setAdjustments({ ...photo.adjustments }); setCaption(photo.caption); setAiBlob(photo.aiImage ?? null); setSourceLabel(photo.caption || 'Saved photo'); setScreen('print') }
   const deleteSaved = async (id: string) => { if (!window.confirm('Delete this photo from your local gallery?')) return; try { await deletePhoto(id); await refreshGallery(); notify('Photo deleted from this browser.') } catch (error) { notify(error instanceof Error ? error.message : 'Photo could not be deleted.') } }
   const clearGallery = async () => { if (!window.confirm('Delete every photo in this browserâ€™s gallery? This cannot be undone.')) return; try { await clearPhotos(); await refreshGallery(); notify('The local gallery is clear.') } catch (error) { notify(error instanceof Error ? error.message : 'Gallery could not be cleared.') } }
-  const openFile = async (file: File) => { if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { notify('Choose a JPEG, PNG, or WebP photo under 12 MB.'); return } try { const bitmap = await createImageBitmap(file); const valid = bitmap.width >= 64 && bitmap.height >= 64 && bitmap.width <= 12000 && bitmap.height <= 12000; bitmap.close(); if (!valid) { notify('Choose a photo between 64 and 12000 pixels on each side.'); return } } catch { notify('This image could not be opened.'); return } setSource(file); setOriginalPhoto(file); setSourceLabel(file.name); setSelectedId(''); setCaption(''); setAiBlob(null); setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setScreen('print') }
+  const openFile = async (file: File) => { if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { notify('Choose a JPEG, PNG, or WebP photo under 12 MB.'); return } try { const bitmap = await createImageBitmap(file); const valid = bitmap.width >= 64 && bitmap.height >= 64 && bitmap.width <= 12000 && bitmap.height <= 12000 && bitmap.width * bitmap.height <= 40_000_000; bitmap.close(); if (!valid) { notify('Choose a photo between 64 and 12000 pixels per side and under 40 megapixels.'); return } } catch { notify('This image could not be opened.'); return } setSource(file); setOriginalPhoto(file); setSourceLabel(file.name); setSelectedId(''); setCaption(''); setAiBlob(null); setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setScreen('print') }
   const aiTransform = async () => {
     if (!source || !consent) return
     setBusy(true); setAiError(''); setAiBlob(null)
@@ -107,9 +119,15 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
       const aiInput = await prepareAIImage(source)
       const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(new Error('The photo could not be prepared.')); reader.readAsDataURL(aiInput) })
       const response = await fetch('/api/v1/ai/transform', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ consent: true, image: base64, mimeType: 'image/jpeg', style: aiStyle, prompt: aiPrompt }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.message || 'AI transformation is unavailable.')
-      const binary = atob(data.image); const bytes = Uint8Array.from(binary, char => char.charCodeAt(0)); const result = new Blob([bytes], { type: data.mimeType || 'image/png' })
+      const data: unknown = await response.json()
+      if (!response.ok) {
+        const message = typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string' ? data.message : 'AI transformation is unavailable.'
+        throw new Error(message)
+      }
+      if (typeof data !== 'object' || data === null || !('success' in data && data.success === true) || !('image' in data && typeof data.image === 'string') || !('mimeType' in data && data.mimeType === 'image/jpeg')) {
+        throw new Error('The AI provider returned an invalid image. Please try again.')
+      }
+      const binary = atob(data.image); const bytes = Uint8Array.from(binary, char => char.charCodeAt(0)); const result = new Blob([bytes], { type: data.mimeType })
       setAiBlob(result); setSource(result); setSourceLabel('AI styled photo'); setFilter('Natural'); setAdjustments({ ...defaultAdjustments }); setOverlay('None'); setScreen('print'); notify('Your transformed version is ready. The original remains in the gallery record.')
     } catch (error) { setAiError(error instanceof Error ? error.message : 'AI transformation is unavailable.') }
     finally { setBusy(false) }
@@ -137,7 +155,6 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
     </div>}
   </>
 }
-
 
 
 
