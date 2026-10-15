@@ -39,8 +39,12 @@ describe('photo transformation privacy boundary', () => {
     const response = await post('/ai/transform', { image: 'a'.repeat(120), mimeType: 'image/jpeg', style: 'Watercolor', prompt: '' });
     assert.equal(response.status, 400);
   });
-  it('returns a clear configuration response without a provider key', async () => {
-    const response = await post('/ai/transform', { consent: true, image: 'a'.repeat(120), mimeType: 'image/jpeg', style: 'Watercolor', prompt: '' });
+  it('requires a clothing description for a virtual try-on', async () => {
+    const response = await post('/ai/transform', { consent: true, image: 'a'.repeat(120), mimeType: 'image/jpeg', count: 3 });
+    assert.equal(response.status, 400);
+  });
+  it('validates a three-look request before provider configuration', async () => {
+    const response = await post('/ai/transform', { consent: true, image: 'a'.repeat(120), mimeType: 'image/jpeg', clothing: 'A red wool coat', prompt: 'Minimal and classic', count: 3 });
     assert.equal(response.status, 503);
     assert.match((await response.json()).message, /not configured/i);
   });
