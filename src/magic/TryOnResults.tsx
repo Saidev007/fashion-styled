@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Shirt } from 'lucide-react'
+import { Check, Download, Shirt } from 'lucide-react'
 import './tryOnResults.css'
 
 function TryOnImage({ image, index, onChoose }: { image: Blob; index: number; onChoose: (image: Blob) => void }) {
@@ -14,7 +14,10 @@ function TryOnImage({ image, index, onChoose }: { image: Blob; index: number; on
     {url && <img src={url} alt={`Virtual try-on option ${index + 1}`} />}
     <div className="tryon-card-footer">
       <span>Look {index + 1}</span>
-      <button className="magic-primary" onClick={() => onChoose(image)}><Check size={15} /> Use this look</button>
+      <div className="tryon-card-actions">
+        {url && <a className="tryon-download" href={url} download={`virtual-try-on-look-${index + 1}.jpg`} aria-label={`Download virtual try-on look ${index + 1}`}><Download size={15} /> Download</a>}
+        <button className="magic-primary" onClick={() => onChoose(image)}><Check size={15} /> Use this look</button>
+      </div>
     </div>
   </article>
 }
