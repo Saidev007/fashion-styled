@@ -1,12 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Aperture, ArrowLeft, ChevronLeft, ChevronRight, Download, FlipHorizontal, Images, LoaderCircle, RotateCcw, Save, Sparkles, SwitchCamera, Trash2, X } from 'lucide-react'
 import { clearPhotos, deletePhoto, listPhotos, savePhoto } from './gallery'
 import { loadImage, renderPhoto } from './imageProcessing'
 import { useCamera } from './useCamera'
 import { defaultAdjustments, filters, overlays, type Adjustments, type FilterName, type GalleryPhoto, type OverlayName, filterFor } from './types'
+import TryOnResults from './TryOnResults'
 
 type Screen = 'permission' | 'camera' | 'print' | 'editor' | 'ai' | 'gallery'
 function blobUrl(blob: Blob) { return URL.createObjectURL(blob) }
+function useObjectUrl(blob: Blob | null) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (!blob) {
+      setUrl('')
+      return
+    }
+    const objectUrl = blobUrl(blob)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [blob])
+  return url
+}
 async function prepareAIImage(blob: Blob): Promise<Blob> {
   const image = await loadImage(blob)
   const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight))
@@ -42,25 +56,30 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
   const [selectedId, setSelectedId] = useState('')
   const [busy, setBusy] = useState(false)
   const [consent, setConsent] = useState(false)
-  const [aiStyle, setAiStyle] = useState('Dreamlike illustration')
+  const [aiStyle, setAiStyle] = useState('Photorealistic fashion editorial')
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiBlob, setAiBlob] = useState<Blob | null>(null)
+  const [aiImages, setAiImages] = useState<Blob[]>([])
   const [aiError, setAiError] = useState('')
   const [compare, setCompare] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const notifyRef = useRef(notify)
   useEffect(() => { notifyRef.current = notify }, [notify])
-  const originalUrl = useMemo(() => originalPhoto ? blobUrl(originalPhoto) : '', [originalPhoto])
-  const sourceUrl = useMemo(() => source ? blobUrl(source) : '', [source])
+  const originalUrl = useObjectUrl(originalPhoto)
+  const sourceUrl = useObjectUrl(source)
+  useEffect(() => { setAiImages([]) }, [source])
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({})
-  useEffect(() => () => { if (originalUrl) URL.revokeObjectURL(originalUrl) }, [originalUrl])
-  useEffect(() => () => { if (sourceUrl) URL.revokeObjectURL(sourceUrl) }, [sourceUrl])
+  useEffect(() => {
+    const urls = gallery.map(photo => [photo.id, blobUrl(photo.final)] as const)
+    setThumbUrls(Object.fromEntries(urls))
+    return () => urls.forEach(([, url]) => URL.revokeObjectURL(url))
+  }, [gallery])
   useEffect(() => { if (!camera.stream || !camera.videoRef.current) return; camera.videoRef.current.srcObject = camera.stream; void camera.videoRef.current.play().catch(() => camera.setError('The live preview could not play. Try another camera.')) }, [camera.stream, screen, camera.setError])
   useEffect(() => {
     let active = true
     if (screen !== 'gallery') return
-    listPhotos().then((photos) => { if (active) { setGallery(photos); const urls: Record<string, string> = {}; photos.forEach(photo => { urls[photo.id] = URL.createObjectURL(photo.final) }); setThumbUrls(urls) } }).catch(error => notifyRef.current(error instanceof Error ? error.message : 'Gallery could not be loaded.'))
-    return () => { active = false; setThumbUrls(current => { Object.values(current).forEach(URL.revokeObjectURL); return {} }) }
+    listPhotos().then(photos => { if (active) setGallery(photos) }).catch(error => notifyRef.current(error instanceof Error ? error.message : 'Gallery could not be loaded.'))
+    return () => { active = false }
   }, [screen])
   useEffect(() => {
     if (!open) return
@@ -81,10 +100,6 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
   const refreshGallery = async () => {
     const photos = await listPhotos()
     setGallery(photos)
-    setThumbUrls(current => {
-      Object.values(current).forEach(URL.revokeObjectURL)
-      return Object.fromEntries(photos.map(photo => [photo.id, URL.createObjectURL(photo.final)]))
-    })
   }
   const saveToGallery = async () => {
     if (!source) return
@@ -96,23 +111,34 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
     finally { setBusy(false) }
   }
   const retake = () => { setOriginalPhoto(null); setSource(null); setSourceLabel(''); setSelectedId(''); setCaption(''); setAiBlob(null); setScreen('permission') }
-  const openSaved = async (photo: GalleryPhoto) => { setSelectedId(photo.id); setOriginalPhoto(photo.original); setSource(photo.final); setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setCaption(photo.caption); setAiBlob(photo.aiImage ?? null); setSourceLabel(photo.caption || 'Saved photo'); setScreen('print') }
+  const openSaved = async (photo: GalleryPhoto) => { setSelectedId(photo.id); setOriginalPhoto(photo.original); setSource(photo.aiImage ?? photo.original); setFilter(photo.filter); setOverlay(photo.overlay); setAdjustments({ ...photo.adjustments }); setCaption(photo.caption); setAiBlob(photo.aiImage ?? null); setSourceLabel(photo.caption || 'Saved photo'); setScreen('print') }
   const deleteSaved = async (id: string) => { if (!window.confirm('Delete this photo from your local gallery?')) return; try { await deletePhoto(id); await refreshGallery(); notify('Photo deleted from this browser.') } catch (error) { notify(error instanceof Error ? error.message : 'Photo could not be deleted.') } }
   const clearGallery = async () => { if (!window.confirm('Delete every photo in this browserâ€™s gallery? This cannot be undone.')) return; try { await clearPhotos(); await refreshGallery(); notify('The local gallery is clear.') } catch (error) { notify(error instanceof Error ? error.message : 'Gallery could not be cleared.') } }
-  const openFile = async (file: File) => { if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { notify('Choose a JPEG, PNG, or WebP photo under 12 MB.'); return } try { const bitmap = await createImageBitmap(file); const valid = bitmap.width >= 64 && bitmap.height >= 64 && bitmap.width <= 12000 && bitmap.height <= 12000; bitmap.close(); if (!valid) { notify('Choose a photo between 64 and 12000 pixels on each side.'); return } } catch { notify('This image could not be opened.'); return } setSource(file); setOriginalPhoto(file); setSourceLabel(file.name); setSelectedId(''); setCaption(''); setAiBlob(null); setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setScreen('print') }
+  const openFile = async (file: File) => { if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { notify('Choose a JPEG, PNG, or WebP photo under 12 MB.'); return } try { const bitmap = await createImageBitmap(file); const valid = bitmap.width >= 64 && bitmap.height >= 64 && bitmap.width <= 12000 && bitmap.height <= 12000 && bitmap.width * bitmap.height <= 40_000_000; bitmap.close(); if (!valid) { notify('Choose a photo between 64 and 12000 pixels per side and under 40 megapixels.'); return } } catch { notify('This image could not be opened.'); return } setSource(file); setOriginalPhoto(file); setSourceLabel(file.name); setSelectedId(''); setCaption(''); setAiBlob(null); setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setScreen('print') }
   const aiTransform = async () => {
-    if (!source || !consent) return
-    setBusy(true); setAiError(''); setAiBlob(null)
+    const referencePhoto = originalPhoto ?? source
+    if (!referencePhoto || !consent || aiPrompt.trim().length < 3) return
+    setBusy(true); setAiError(''); setAiImages([])
     try {
-      const aiInput = await prepareAIImage(source)
+      const aiInput = await prepareAIImage(referencePhoto)
       const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(new Error('The photo could not be prepared.')); reader.readAsDataURL(aiInput) })
-      const response = await fetch('/api/v1/ai/transform', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ consent: true, image: base64, mimeType: 'image/jpeg', style: aiStyle, prompt: aiPrompt }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.message || 'AI transformation is unavailable.')
-      const binary = atob(data.image); const bytes = Uint8Array.from(binary, char => char.charCodeAt(0)); const result = new Blob([bytes], { type: data.mimeType || 'image/png' })
-      setAiBlob(result); setSource(result); setSourceLabel('AI styled photo'); setFilter('Natural'); setAdjustments({ ...defaultAdjustments }); setOverlay('None'); setScreen('print'); notify('Your transformed version is ready. The original remains in the gallery record.')
+      const response = await fetch('/api/v1/ai/transform', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ consent: true, image: base64, mimeType: 'image/jpeg', clothing: aiPrompt.trim(), prompt: aiStyle, count: 3 }) })
+      const data: unknown = await response.json()
+      if (!response.ok) {
+        const message = typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string' ? data.message : 'AI transformation is unavailable.'
+        throw new Error(message)
+      }
+      if (typeof data !== 'object' || data === null || !('success' in data && data.success === true) || !('images' in data && Array.isArray(data.images) && data.images.length === 3 && data.images.every((image): image is string => typeof image === 'string')) || !('mimeType' in data && data.mimeType === 'image/jpeg')) {
+        throw new Error('The AI provider returned invalid try-on images. Please try again.')
+      }
+      const images = data.images.map(encoded => { const binary = atob(encoded); const bytes = Uint8Array.from(binary, char => char.charCodeAt(0)); return new Blob([bytes], { type: 'image/jpeg' }) })
+      setAiImages(images)
+      notify('Your three try-on looks are ready. Choose one to continue.')
     } catch (error) { setAiError(error instanceof Error ? error.message : 'AI transformation is unavailable.') }
     finally { setBusy(false) }
+  }
+  const chooseTryOn = (image: Blob) => {
+    setAiBlob(image); setSource(image); setSourceLabel('Virtual try-on'); setFilter('Natural'); setAdjustments({ ...defaultAdjustments }); setOverlay('None'); setScreen('print')
   }
   const useOriginal = () => { if (!source) return; if (originalPhoto) setSource(originalPhoto); setAiBlob(null); setSourceLabel('Original photo'); setScreen('print') }
   const setAdjustment = (key: keyof Adjustments, value: number | boolean) => setAdjustments(current => ({ ...current, [key]: value }))
@@ -129,7 +155,7 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
           {screen === 'camera' && <div className="magic-camera-stage"><div className="magic-video-wrap"><video ref={camera.videoRef} autoPlay muted playsInline aria-label="Live camera preview" /><div className="viewfinder viewfinder-a" /><div className="viewfinder viewfinder-b" /><div className="camera-live"><i /> LIVE PREVIEW</div>{camera.error && <div className="camera-overlay-error" role="alert">{camera.error}</div>}</div><div className="camera-controls"><button className="magic-icon-button" onClick={() => void camera.switchCamera()} disabled={camera.devices.length < 2} aria-label="Switch camera"><SwitchCamera size={21} /></button><button className={`magic-icon-button ${camera.flashEffect ? "is-on" : ""}`} onClick={() => camera.setFlashEffect(value => !value)} aria-label={camera.flashEffect ? "Turn off visual flash effect" : "Turn on visual flash effect"} aria-pressed={camera.flashEffect}><Sparkles size={18} /></button><button className="shutter-button" onClick={() => void capture()} aria-label="Take photo"><span /></button><button className="magic-icon-button" onClick={() => void camera.start()} aria-label="Restart camera"><RotateCcw size={19} /></button></div><div className="camera-device-note">{camera.devices[camera.deviceIndex]?.label || 'Camera ready'} <span>Â·</span> flash effect is visual only</div></div>}
           {screen === 'print' && source && <div className="instant-stage"><div className="instant-glow" /><div className="instant-card" key={sourceLabel + selectedId}><div className="instant-image"><img src={sourceUrl} alt="Your captured photograph" style={{ filter: previewCss, transform: `rotate(${adjustments.rotation}deg) scaleX(${adjustments.flip ? -1 : 1})` }} />{overlay === 'Futuristic blue' && <span className="preview-frame blue-frame" />}{overlay === 'Neon' && <span className="preview-frame neon-frame" />}{overlay === 'Minimal white' && <span className="preview-frame white-frame" />}{(overlay === 'Sparkles' || overlay === 'Starry night') && <span className="preview-stars">âœ¦ã€€Â·ã€€âœ§ã€€ã€€âœ¦</span>}</div><div className="instant-caption">{overlay === 'Polaroid' ? <input value={caption} maxLength={48} onChange={event => setCaption(event.target.value)} aria-label="Photo caption" placeholder="A little moment" /> : <><span>{sourceLabel || 'A MOMENT, KEPT'}</span><small>{new Date().toLocaleDateString()}</small></>}</div></div><div className="print-caption"><span className="magic-kicker">âœ¦ YOUR INSTANT PHOTO IS READY âœ¦</span><h2>A moment,<br /><em>made yours.</em></h2><p>Your original stays safe while you make it your own.</p></div><div className="instant-actions"><button className="magic-secondary" onClick={retake}><RotateCcw size={16} /> Retake</button><button className="magic-primary" onClick={openEditor}><Sparkles size={16} /> Edit photo</button><button className="magic-secondary" onClick={() => { setScreen('ai'); setConsent(false); setAiError('') }}><Sparkles size={16} /> AI style</button>{originalPhoto && source !== originalPhoto && <button className="magic-secondary" onClick={useOriginal}>Use original</button>}<button className="magic-secondary" disabled={busy} onClick={() => void saveToGallery()}><Save size={16} /> Save</button><button className="magic-secondary" disabled={busy} onClick={() => void download()}><Download size={16} /> Download</button></div></div>}
           {screen === 'editor' && source && <div className="magic-editor"><div className="editor-toolbar"><button className="magic-back" onClick={() => setScreen('print')}><ArrowLeft size={17} /> Photo</button><div className="editor-title"><span className="magic-kicker">YOUR EDITING DESK</span><strong>Make it yours</strong></div><button className="magic-small" onClick={() => { setFilter('Natural'); setOverlay('None'); setAdjustments({ ...defaultAdjustments }); setCaption('') }}><RotateCcw size={15} /> Reset</button></div><div className="editor-body"><div className="editor-preview-wrap"><div className="editor-photo"><img src={compare && originalUrl ? originalUrl : sourceUrl} alt="Photo being edited" style={{ filter: compare ? 'none' : previewCss, transform: compare ? "none" : `rotate(${adjustments.rotation}deg) scaleX(${adjustments.flip ? -1 : 1})` }} />{!compare && overlay !== 'None' && <span className={`editor-overlay editor-overlay-${overlay.toLowerCase().replace(/ /g,'-').replace('&','and')}`}>{overlay === 'Sparkles' || overlay === 'Starry night' ? 'âœ¦ã€€âœ§ã€€âœ¦' : overlay === 'Polaroid' ? caption || 'A little moment' : ''}</span>}</div><button className="compare-button" onClick={() => setCompare(value => !value)} aria-pressed={compare}><ChevronLeft size={14} /> {compare ? "Show edits" : "Show original"} <ChevronRight size={14} /></button></div><div className="editor-tools"><section className="tool-section"><h3>Looks</h3><div className="filter-strip">{filters.map(option => <button className={`filter-option ${filter === option.name ? 'active' : ''}`} key={option.name} onClick={() => setFilter(option.name)}><span className="filter-swatch"><img src={sourceUrl} alt="" style={{ filter: option.css }} /></span><span>{option.name}</span></button>)}</div></section><section className="tool-section"><h3>Adjust</h3>{([['brightness','Brightness',50,150],['contrast','Contrast',50,160],['saturation','Saturation',0,180],['warmth','Warmth',-100,100]] as const).map(([key,label,min,max]) => <label className="adjust-row" key={key}><span>{label}</span><input aria-label={label} type="range" min={min} max={max} value={adjustments[key]} onChange={event => setAdjustment(key, Number(event.target.value))} /><output>{key === 'warmth' ? adjustments[key] : `${adjustments[key]}%`}</output></label>)}<div className="rotate-controls"><button className="magic-small" onClick={() => setAdjustment('rotation', (adjustments.rotation + 270) % 360)}><RotateCcw size={15} /> Rotate</button><button className="magic-small" onClick={() => setAdjustment('flip', !adjustments.flip)}><FlipHorizontal size={15} /> Flip</button></div></section><section className="tool-section"><h3>Frames & details</h3><div className="overlay-options">{overlays.map(option => <button className={overlay === option ? 'selected' : ''} key={option} onClick={() => setOverlay(option)}>{option}</button>)}</div></section><div className="editor-final-actions"><button className="magic-primary" disabled={busy} onClick={() => void saveToGallery()}><Save size={16} /> Save to gallery</button><button className="magic-secondary" disabled={busy} onClick={() => void download()}><Download size={16} /> Download finished photo</button></div></div></div></div>}
-          {screen === 'ai' && source && <div className="ai-screen"><button className="magic-back" onClick={() => setScreen('print')}><ArrowLeft size={17} /> Back to photo</button><div className="ai-heading"><div className="ai-orb"><Sparkles size={27} /></div><p className="magic-kicker">A NEW WAY TO SEE IT</p><h2>Give your photo<br /><em>a different world.</em></h2><p>AI styling sends this image to the configured image provider for processing. Your original remains unchanged.</p></div><div className="ai-form"><label htmlFor="ai-style">Choose a style</label><select id="ai-style" value={aiStyle} onChange={event => setAiStyle(event.target.value)}>{['Dreamlike illustration','Watercolor storybook','Retro travel poster','Cel-shaded adventure','Soft 3D miniature','Paper collage'].map(style => <option key={style}>{style}</option>)}</select><label htmlFor="ai-prompt">Add a direction <span>optional</span></label><textarea id="ai-prompt" value={aiPrompt} maxLength={300} onChange={event => setAiPrompt(event.target.value)} placeholder="Add soft blue details and a twilight skyâ€¦" />{aiError && <p role="alert" className="magic-error">{aiError}</p>}<label className="ai-consent"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} /><span>I understand this photo will be sent to an external AI provider. I choose to continue.</span></label><button className="magic-primary ai-submit" disabled={!consent || busy} onClick={() => void aiTransform()}>{busy ? <><LoaderCircle className="spin" size={17} /> Creatingâ€¦</> : <><Sparkles size={17} /> Transform this photo</>}</button><small>AI output is a new version. You can return to your original at any time.</small></div><button className="magic-secondary" onClick={useOriginal}>Use original photo</button></div>}
+          {screen === 'ai' && source && <div className="ai-screen tryon-screen"><button className="magic-back" onClick={() => setScreen('print')}><ArrowLeft size={17} /> Back to photo</button><div className="ai-heading"><div className="ai-orb"><Sparkles size={27} /></div><p className="magic-kicker">VIRTUAL TRY-ON</p><h2>See a new look<br /><em>on you.</em></h2><p>Use your photo as a reference and describe the clothes. We’ll create three photorealistic variations while keeping you and your pose recognizable.</p></div><div className="ai-form"><label htmlFor="ai-prompt">What clothes would you like to try?</label><textarea id="ai-prompt" value={aiPrompt} maxLength={300} onChange={event => setAiPrompt(event.target.value)} placeholder="For example: a cream oversized blazer, white tee, straight-leg blue jeans, and white sneakers" /><label htmlFor="ai-style">Style direction</label><select id="ai-style" value={aiStyle} onChange={event => setAiStyle(event.target.value)}>{['Photorealistic fashion editorial','Everyday street style','Minimal and classic','Soft romantic','Bold and colorful'].map(style => <option key={style}>{style}</option>)}</select>{aiError && <p role="alert" className="magic-error">{aiError}</p>}<label className="ai-consent"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} /><span>I understand this photo will be sent to an external AI provider. I choose to continue.</span></label><button className="magic-primary ai-submit" disabled={!consent || busy || aiPrompt.trim().length < 3} onClick={() => void aiTransform()}>{busy ? <><LoaderCircle className="spin" size={17} /> Creating looks…</> : <><Sparkles size={17} /> Generate 3 try-on looks</>}</button><small>Choose a result to edit or save it. Your original photo remains unchanged.</small></div><TryOnResults images={aiImages} busy={busy} onChoose={chooseTryOn} /><button className="magic-secondary" onClick={useOriginal}>Use original photo</button></div>}
           {screen === 'gallery' && <div className="magic-gallery"><div className="gallery-heading"><div><p className="magic-kicker">ONLY ON THIS DEVICE</p><h2>Your Magic <em>Gallery.</em></h2><p>Saved locally in this browser. It won't sync to other devices.</p></div><div className="gallery-heading-actions"><button className="magic-secondary" onClick={() => fileRef.current?.click()}>Add photo</button>{gallery.length > 0 && <button className="magic-small danger" onClick={() => void clearGallery()}><Trash2 size={15} /> Clear all</button>}</div></div><input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void openFile(file); event.currentTarget.value = '' }} />{gallery.length ? <div className="magic-gallery-grid">{gallery.map(photo => <article className="gallery-card" key={photo.id}><button className="gallery-thumb" onClick={() => void openSaved(photo)} aria-label={`Open ${photo.caption || 'saved photo'}`}><img src={thumbUrls[photo.id]} alt={photo.caption || 'Saved photo'} loading="lazy" /></button><div><span>{new Date(photo.createdAt).toLocaleDateString()}</span><button aria-label="Delete photo" onClick={() => void deleteSaved(photo.id)}><Trash2 size={15} /></button></div><button className="gallery-edit-link" onClick={() => void openSaved(photo)}>{photo.caption || 'Edit this photo'} <ChevronRight size={14} /></button></article>)}</div> : <div className="gallery-empty"><div className="magic-orbit small"><div className="magic-pocket"><Images size={31} /></div></div><h3>Your little gallery is waiting.</h3><p>Capture a moment or open a photo to make your first instant print.</p><button className="magic-primary" onClick={() => setScreen('permission')}><Aperture size={16} /> Take a photo</button></div>}</div>}
         </div>
         <footer className="magic-footer"><span><i /> PRIVATE BY DEFAULT</span><span>Photos remain in your browser unless you choose AI processing.</span></footer>
@@ -137,11 +163,3 @@ export default function MagicCamera({ notify }: { notify: (message: string) => v
     </div>}
   </>
 }
-
-
-
-
-
-
-
-

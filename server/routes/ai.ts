@@ -4,7 +4,7 @@ import { env } from '../config/env.js'
 
 
 const router = Router()
-const schema = z.object({ consent: z.literal(true), image: z.string().min(100).max(4_000_000), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']), style: z.string().trim().min(3).max(80), prompt: z.string().trim().max(300).default('') })
+const schema = z.object({ consent: z.literal(true), image: z.string().min(100).max(4_000_000), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']), style: z.string().trim().min(3).max(80).optional(), clothing: z.string().trim().min(3).max(300).optional(), prompt: z.string().trim().max(300).default(''), count: z.number().int().min(1).max(3).default(1) }).refine(input => input.style || input.clothing, 'A style or clothing description is required.')
 const attempts = new Map<string, { count: number; reset: number }>()
 router.post('/transform', async (req, res) => {
   const ip = req.ip ?? 'unknown'; const now = Date.now(); const limit = attempts.get(ip)
@@ -22,19 +22,26 @@ router.post('/transform', async (req, res) => {
     if (!validImageContent(buffer, input.mimeType)) return res.status(400).json({ success: false, message: 'Use a valid image at least 64 pixels across and no larger than 8192 pixels per side.' })
     const form = new FormData()
     form.append('model', env.AI_MODEL || 'gpt-image-2')
-    const styleText = `Transform this photograph into ${input.style}. Preserve the subject and main composition. Do not add text or logos. ${input.prompt}`
+    const styleText = input.clothing
+      ? `Create a photorealistic virtual try-on image using the supplied photograph as the reference for the exact same person. Preserve their identity, face, skin tone, body shape, pose, camera angle, background, and lighting. Change only their clothing to: ${input.clothing}. Make the garments look naturally fitted and realistic, with accurate fabric, colors, and construction. Do not add text or logos. ${input.prompt}`
+      : `Transform this photograph into ${input.style}. Preserve the subject and main composition. Do not add text or logos. ${input.prompt}`
     form.append('prompt', styleText)
     form.append('image[]', new Blob([buffer], { type: input.mimeType }), `photo.${input.mimeType.split('/')[1]}`)
+    form.append('n', String(input.count))
     form.append('quality', 'medium')
     form.append('output_format', 'jpeg')
     form.append('output_compression', '70')
     const response = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: `Bearer ${env.AI_API_KEY}` }, body: form, signal: AbortSignal.timeout(170_000) })
     const result = await response.json() as { data?: Array<{ b64_json?: string }>; error?: { message?: string } }
     if (!response.ok) return res.status(response.status === 429 ? 503 : 502).json({ success: false, message: response.status === 429 ? 'The image provider is busy. Please retry shortly.' : result.error?.message || 'The image provider could not process this photo.' })
-    const image = result.data?.[0]?.b64_json
-    if (!image) return res.status(502).json({ success: false, message: 'The image provider returned no transformed image.' })
-    if (image.length > 4_000_000) return res.status(502).json({ success: false, message: 'The transformed photo is too large to return. Try again with a smaller input.' })
-    return res.json({ success: true, image, mimeType: 'image/jpeg' })
+    const images = result.data?.map(item => item.b64_json).filter((image): image is string => typeof image === 'string') ?? []
+    if (images.length !== input.count) return res.status(502).json({ success: false, message: 'The image provider did not return all requested variations. Please try again.' })
+    if (images.some(image => image.length > 4_000_000) || images.reduce((total, image) => total + image.length, 0) > 4_000_000) {
+      return res.status(502).json({ success: false, message: 'The generated images are too large to return. Try again with a smaller input.' })
+    }
+    return res.json(input.count === 1
+      ? { success: true, images, image: images[0], mimeType: 'image/jpeg' }
+      : { success: true, images, mimeType: 'image/jpeg' })
   } catch (error) {
     const timeout = error instanceof Error && error.name === 'TimeoutError'
     return res.status(timeout ? 504 : 502).json({ success: false, message: timeout ? 'Image transformation took too long. Please try again.' : 'The image provider is unavailable right now.' })

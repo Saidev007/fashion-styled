@@ -6,3 +6,7 @@ dist/
 *.tsbuildinfo
 
 dist-server/
+
+.vscode/
+
+.vscode/
