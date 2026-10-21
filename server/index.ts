@@ -1,4 +1,4 @@
-﻿import cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
 import { connectDatabase } from './config/db.js';
@@ -10,12 +10,21 @@ import healthRoutes from './routes/health.js';
 import wardrobeRoutes from './routes/wardrobe.js';
 
 export const app = express();
+
 app.disable('x-powered-by');
-app.use(cors({ origin: env.APP_URL, credentials: true }));
+app.use(cors({
+  origin: env.APP_URL,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+}));
 app.use(express.json({ limit: '8mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser(env.SESSION_SECRET));
-app.get('/api/v1', (_req, res) => res.json({ success: true, service: 'fashion-style-board-ai', version: '0.2.0' }));
+
+app.get('/api/v1', (_req, res) =>
+  res.json({ success: true, service: 'fashion-style-board-ai', version: '0.2.0' }),
+);
+
 app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/ai', aiRoutes);
@@ -23,15 +32,18 @@ app.use('/api/v1/wardrobe', wardrobeRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
+export async function startServer() {
+  await connectDatabase();
+  return app.listen(env.PORT, () => {
+    console.log(`Fashion Style Board AI API listening on port ${env.PORT}`);
+  });
+}
+
 if (process.env.VERCEL !== '1') {
-  void connectDatabase().then(() => {
-    app.listen(env.PORT, () => console.log(`Fashion Style Board AI API listening on port ${env.PORT}`));
-  }).catch((error: unknown) => {
+  void startServer().catch((error: unknown) => {
     console.error('API startup failed:', error instanceof Error ? error.message : 'Unknown error');
     process.exit(1);
   });
 }
 
-
-export default app
-
+export default app;
